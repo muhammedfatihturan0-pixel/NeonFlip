@@ -1,0 +1,41 @@
+@import "tailwindcss";
+
+@layer utilities {
+  .touch-none {
+    touch-action: none;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+}
+
+/* Custom keyframes and arcade glow */
+@keyframes pulse-glow {
+  0%, 100% {
+    filter: drop-shadow(0 0 15px currentColor);
+    opacity: 1;
+  }
+  50% {
+    filter: drop-shadow(0 0 5px currentColor);
+    opacity: 0.85;
+  }
+}
+
+.animate-pulse-glow {
+  animation: pulse-glow 2s infinite ease-in-out;
+}
+
+/* Scanline subtle overlay */
+.scanlines {
+  background: linear-gradient(
+    rgba(18, 16, 16, 0) 50%, 
+    rgba(0, 0, 0, 0.25) 50%
+  ), linear-gradient(
+    90deg,
+    rgba(255, 0, 0, 0.03),
+    rgba(0, 255, 0, 0.01),
+    rgba(0, 0, 255, 0.03)
+  );
+  background-size: 100% 3px, 6px 100%;
+  pointer-events: none;
+}

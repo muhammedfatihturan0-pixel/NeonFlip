@@ -1,0 +1,6 @@
+{
+  "name": "Neon Flip - Viral Gravity Rush",
+  "description": "Ultra-addictive 1-tap hyper-casual reflex mobile game with gravity flips, combo streaks, unlockable skins, and built-in monetization.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
