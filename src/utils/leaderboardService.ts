@@ -1,29 +1,125 @@
+import { useSyncExternalStore } from 'react';
+import {
+  collection,
+  doc,
+  getCountFromServer,
+  limit,
+  onSnapshot,
+  orderBy,
+  query,
+  serverTimestamp,
+  setDoc,
+  where,
+  type Timestamp,
+} from 'firebase/firestore';
+import { db, ensureUser } from '../firebase';
 import { LeaderboardEntry, PlayerStats } from '../types';
 
-const GLOBAL_BOARD_STORAGE_KEY = 'zyphor_global_leaderboard_v1';
+/**
+ * Canlı küresel liderlik tablosu (Firebase Firestore, koleksiyon: `leaderboard`, belge kimliği = anonim uid).
+ * Bileşenler senkron `getRankedLeaderboard` çağırır; bulut verisi geldikçe `useLeaderboardVersion` yeniden çizdirir.
+ * Çevrimdışıyken son görülen liste (localStorage önbelleği) kullanılır.
+ */
 
-// Baseline global competitors to give every new player exciting targets to beat immediately.
-// Once Firebase Firestore is connected, this service seamlessly switches to live cloud queries.
-const SEED_GLOBAL_PLAYERS: LeaderboardEntry[] = [
-  { id: 'glb_01', name: 'Kaan_Apex', score: 164, bestCombo: 28, skinColor: '#eab308', updatedAt: Date.now() - 86400000 * 2 },
-  { id: 'glb_02', name: 'MiraShift', score: 138, bestCombo: 24, skinColor: '#ec4899', updatedAt: Date.now() - 86400000 * 3 },
-  { id: 'glb_03', name: 'ZyphorProTR', score: 115, bestCombo: 21, skinColor: '#8b5cf6', updatedAt: Date.now() - 86400000 * 1 },
-  { id: 'glb_04', name: 'VortexEmir', score: 94, bestCombo: 18, skinColor: '#06b6d4', updatedAt: Date.now() - 86400000 * 4 },
-  { id: 'glb_05', name: 'ShadowPulse', score: 78, bestCombo: 15, skinColor: '#10b981', updatedAt: Date.now() - 86400000 * 2 },
-  { id: 'glb_06', name: 'DefneReflex', score: 63, bestCombo: 13, skinColor: '#f97316', updatedAt: Date.now() - 86400000 * 5 },
-  { id: 'glb_07', name: 'Kerem_99', score: 51, bestCombo: 11, skinColor: '#38bdf8', updatedAt: Date.now() - 86400000 * 1 },
-  { id: 'glb_08', name: 'Misafir', score: 40, bestCombo: 9, skinColor: '#06b6d4', isGuest: true, updatedAt: Date.now() - 86400000 * 2 },
-  { id: 'glb_09', name: 'ArdaNova', score: 31, bestCombo: 8, skinColor: '#ec4899', updatedAt: Date.now() - 86400000 * 3 },
-  { id: 'glb_10', name: 'EceVolt', score: 22, bestCombo: 6, skinColor: '#eab308', updatedAt: Date.now() - 86400000 * 4 },
-  { id: 'glb_11', name: 'YusufDash', score: 14, bestCombo: 4, skinColor: '#10b981', updatedAt: Date.now() - 86400000 * 2 },
-  { id: 'glb_12', name: 'Misafir', score: 7, bestCombo: 3, skinColor: '#06b6d4', isGuest: true, updatedAt: Date.now() - 86400000 * 1 },
-];
+const COLLECTION = 'leaderboard';
+const TOP_N = 100;
+const CACHE_KEY = 'zyphor_global_leaderboard_cache_v2';
 
-export interface RankedLeaderboardResult {
-  entries: (LeaderboardEntry & { rank: number; badge: string })[];
-  userRank: number;
-  totalPlayers: number;
-  nextRival: (LeaderboardEntry & { rank: number; pointsNeeded: number }) | null;
+let cloudEntries: LeaderboardEntry[] = loadCache();
+let myUid: string | null = null;
+let totalCount: number | null = null; // tablodaki toplam oyuncu
+let aboveCount: number | null = null; // benden yüksek skorlu oyuncu sayısı
+let countedForScore = -1;
+let version = 0;
+const listeners = new Set<() => void>();
+
+function emit() {
+  version++;
+  listeners.forEach((l) => l());
+}
+
+export function useLeaderboardVersion(): number {
+  startLiveLeaderboard();
+  return useSyncExternalStore(
+    (cb) => {
+      listeners.add(cb);
+      return () => listeners.delete(cb);
+    },
+    () => version
+  );
+}
+
+function loadCache(): LeaderboardEntry[] {
+  try {
+    const raw = localStorage.getItem(CACHE_KEY);
+    const parsed = raw ? JSON.parse(raw) : null;
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveCache(entries: LeaderboardEntry[]) {
+  try {
+    localStorage.setItem(CACHE_KEY, JSON.stringify(entries));
+  } catch {
+    // depolama hatası önemsiz
+  }
+}
+
+let started = false;
+/** Canlı dinlemeyi bir kez başlatır (ilk 100 skor). */
+export function startLiveLeaderboard() {
+  if (started) return;
+  started = true;
+  ensureUser()
+    .then((user) => {
+      myUid = user.uid;
+      const q = query(collection(db, COLLECTION), orderBy('score', 'desc'), limit(TOP_N));
+      onSnapshot(
+        q,
+        (snap) => {
+          cloudEntries = snap.docs.map((d) => {
+            const v = d.data();
+            const ts = v.updatedAt as Timestamp | null;
+            return {
+              id: d.id,
+              name: String(v.name ?? 'Misafir'),
+              score: Number(v.score ?? 0),
+              bestCombo: Number(v.bestCombo ?? 0),
+              skinColor: typeof v.skinColor === 'string' ? v.skinColor : undefined,
+              isGuest: Boolean(v.isGuest),
+              updatedAt: ts?.toMillis?.() ?? Date.now(),
+            };
+          });
+          saveCache(cloudEntries);
+          countedForScore = -1; // sıralama değişmiş olabilir
+          emit();
+        },
+        () => {
+          // bağlantı yok / izin hatası: önbellekle devam
+        }
+      );
+    })
+    .catch(() => {
+      started = false; // giriş başarısız (çevrimdışı): bir sonraki çağrıda tekrar dene
+    });
+}
+
+/** Tablo ilk 100'den uzunsa gerçek sırayı ve toplam oyuncu sayısını sunucudan sayar. */
+function refreshCounts(score: number) {
+  if (countedForScore === score) return;
+  countedForScore = score;
+  const col = collection(db, COLLECTION);
+  Promise.all([getCountFromServer(col), getCountFromServer(query(col, where('score', '>', score)))])
+    .then(([all, above]) => {
+      totalCount = all.data().count;
+      aboveCount = above.data().count;
+      emit();
+    })
+    .catch(() => {
+      countedForScore = -1;
+    });
 }
 
 export function getRankBadge(score: number, rank: number): string {
@@ -38,64 +134,73 @@ export function getRankBadge(score: number, rank: number): string {
 }
 
 export function sanitizePlayerName(raw: string): string {
-  const cleaned = raw.replace(/\s+/g, ' ').trim().slice(0, 16);
-  return cleaned;
+  return raw.replace(/\s+/g, ' ').trim().slice(0, 16);
 }
 
-function loadStoredEntries(): LeaderboardEntry[] {
-  try {
-    const raw = localStorage.getItem(GLOBAL_BOARD_STORAGE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        return parsed;
-      }
-    }
-  } catch {
-    // fallback
-  }
-  return [...SEED_GLOBAL_PLAYERS];
+function displayName(stats: PlayerStats): string {
+  return stats.isGuest ? 'Misafir' : sanitizePlayerName(stats.playerName) || 'Misafir';
 }
 
-function saveStoredEntries(entries: LeaderboardEntry[]) {
-  try {
-    localStorage.setItem(GLOBAL_BOARD_STORAGE_KEY, JSON.stringify(entries));
-  } catch {
-    // ignore storage errors
-  }
-}
+// Bulut yazmalarını azalt: sadece rekor/isim/görünüm değişince ve 1.5 sn biriktirerek yaz.
+const LAST_SENT_KEY = 'zyphor_leaderboard_last_sent_v1';
+let pendingTimer: ReturnType<typeof setTimeout> | null = null;
 
-/**
- * Saves or updates the current player's high score & nickname on the leaderboard.
- * Designed as an async-friendly boundary so Firebase Firestore can replace local persistence cleanly.
- */
+/** Oyuncunun rekorunu ve takma adını küresel tabloya yazar. */
 export function syncPlayerToLeaderboard(stats: PlayerStats, skinColor: string): void {
-  const entries = loadStoredEntries().filter((e) => e.id !== stats.playerId);
-  entries.push({
-    id: stats.playerId,
-    name: stats.isGuest ? 'Misafir' : sanitizePlayerName(stats.playerName) || 'Misafir',
-    score: stats.highScore,
-    bestCombo: stats.bestCombo,
-    skinColor,
-    isGuest: stats.isGuest,
-    updatedAt: Date.now(),
-  });
-  saveStoredEntries(entries);
+  const score = Math.max(0, Math.floor(stats.highScore || 0));
+  if (score <= 0) return; // henüz skoru olmayanı tabloya koyma
+  const payload = {
+    name: displayName(stats),
+    score,
+    bestCombo: Math.max(0, Math.floor(stats.bestCombo || 0)),
+    skinColor: String(skinColor).slice(0, 16),
+    isGuest: Boolean(stats.isGuest),
+  };
+  const signature = JSON.stringify(payload);
+  let last: string | null = null;
+  try {
+    last = localStorage.getItem(LAST_SENT_KEY);
+  } catch {
+    // yok say
+  }
+  if (last === signature) return;
+
+  if (pendingTimer) clearTimeout(pendingTimer);
+  pendingTimer = setTimeout(() => {
+    pendingTimer = null;
+    ensureUser()
+      .then((user) =>
+        setDoc(doc(db, COLLECTION, user.uid), { ...payload, updatedAt: serverTimestamp() })
+      )
+      .then(() => {
+        try {
+          localStorage.setItem(LAST_SENT_KEY, signature);
+        } catch {
+          // yok say
+        }
+      })
+      .catch(() => {
+        // çevrimdışı: bir sonraki istatistik değişiminde yeniden denenir
+      });
+  }, 1500);
 }
 
-/**
- * Returns the ranked global leaderboard, the current player's rank,
- * and the exact next rival above them so they always have a target to beat.
- */
-export function getRankedLeaderboard(
-  stats: PlayerStats,
-  skinColor = '#06b6d4'
-): RankedLeaderboardResult {
-  const stored = loadStoredEntries().filter((e) => e.id !== stats.playerId);
+export interface RankedLeaderboardResult {
+  entries: (LeaderboardEntry & { rank: number; badge: string })[];
+  userRank: number;
+  totalPlayers: number;
+  nextRival: (LeaderboardEntry & { rank: number; pointsNeeded: number }) | null;
+}
+
+/** Sıralı küresel tablo, oyuncunun sırası ve hemen üstündeki rakip. */
+export function getRankedLeaderboard(stats: PlayerStats, skinColor = '#06b6d4'): RankedLeaderboardResult {
+  startLiveLeaderboard();
+
+  const others = cloudEntries.filter((e) => e.id !== myUid && e.id !== stats.playerId);
 
   const userEntry: LeaderboardEntry = {
     id: stats.playerId,
-    name: stats.isGuest ? 'Misafir' : sanitizePlayerName(stats.playerName) || 'Misafir',
+    name: displayName(stats),
     score: stats.highScore,
     bestCombo: stats.bestCombo,
     skinColor,
@@ -104,9 +209,8 @@ export function getRankedLeaderboard(
     updatedAt: Date.now(),
   };
 
-  const combined = [...stored.map((e) => ({ ...e, isUser: false })), userEntry].sort((a, b) => {
+  const combined = [...others.map((e) => ({ ...e, isUser: false })), userEntry].sort((a, b) => {
     if (b.score !== a.score) return b.score - a.score;
-    // Tie-breaker: higher combo wins, then user edges ahead if equal
     if (b.bestCombo !== a.bestCombo) return b.bestCombo - a.bestCombo;
     return a.isUser ? -1 : 1;
   });
@@ -118,7 +222,15 @@ export function getRankedLeaderboard(
   }));
 
   const userIdx = ranked.findIndex((r) => r.isUser);
-  const userRank = userIdx >= 0 ? ranked[userIdx].rank : ranked.length;
+  let userRank = userIdx >= 0 ? ranked[userIdx].rank : ranked.length;
+  let totalPlayers = ranked.length;
+
+  // Tablo dolu (ilk 100'ün dışında oyuncular var): gerçek sıra ve toplamı sunucudan say.
+  if (cloudEntries.length >= TOP_N && myUid) {
+    refreshCounts(stats.highScore);
+    if (aboveCount !== null && countedForScore === stats.highScore) userRank = aboveCount + 1;
+    if (totalCount !== null) totalPlayers = Math.max(totalCount, totalPlayers);
+  }
 
   let nextRival: (LeaderboardEntry & { rank: number; pointsNeeded: number }) | null = null;
   if (userIdx > 0) {
@@ -129,10 +241,5 @@ export function getRankedLeaderboard(
     };
   }
 
-  return {
-    entries: ranked,
-    userRank,
-    totalPlayers: ranked.length,
-    nextRival,
-  };
+  return { entries: ranked, userRank, totalPlayers, nextRival };
 }

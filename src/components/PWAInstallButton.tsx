@@ -1,12 +1,14 @@
 import React, { useState } from 'react';
 import { usePWAInstall } from '../hooks/usePWAInstall';
 import { Download, Smartphone } from 'lucide-react';
+import { Capacitor } from '@capacitor/core';
 
 export const PWAInstallButton: React.FC = () => {
   const { isInstallable, isInstalled, isIOS, install } = usePWAInstall();
   const [showIOSGuide, setShowIOSGuide] = useState(false);
 
-  if (isInstalled) {
+  // Play Store uygulamasının içinde "uygulamayı yükle" düğmesi anlamsız.
+  if (isInstalled || Capacitor.isNativePlatform()) {
     return null;
   }
 

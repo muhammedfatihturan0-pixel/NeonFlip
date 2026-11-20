@@ -4,12 +4,15 @@ import path from 'path';
 import { defineConfig } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
-export default defineConfig(() => {
+export default defineConfig(({ mode }) => {
   return {
     plugins: [
       react(),
       tailwindcss(),
       VitePWA({
+        // Android (Capacitor) derlemesinde service worker yok: dosyalar zaten uygulamanın içinde,
+        // SW kalırsa güncellemeden sonra eski sürümü gösterebilir.
+        disable: mode === 'android',
         registerType: 'autoUpdate',
         includeAssets: [
           'favicon.png',

@@ -1,0 +1,32 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Küresel liderlik tablosu: herkes okur, her oyuncu yalnızca kendi belgesini (uid) yazar.
+    match /leaderboard/{uid} {
+      allow read: if true;
+      allow create: if isOwner(uid) && valid(request.resource.data);
+      // Rekor asla düşürülemez.
+      allow update: if isOwner(uid) && valid(request.resource.data)
+                    && request.resource.data.score >= resource.data.score;
+      allow delete: if false;
+    }
+    // Diğer her şey kapalı.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isOwner(uid) {
+      return request.auth != null && request.auth.uid == uid;
+    }
+    function valid(d) {
+      return d.keys().hasOnly(['name', 'score', 'bestCombo', 'skinColor', 'isGuest', 'updatedAt'])
+        && d.keys().hasAll(['name', 'score', 'bestCombo', 'isGuest', 'updatedAt'])
+        && d.name is string && d.name.size() > 0 && d.name.size() <= 16
+        && d.score is int && d.score > 0 && d.score <= 100000
+        && d.bestCombo is int && d.bestCombo >= 0 && d.bestCombo <= 100000
+        && (!('skinColor' in d) || (d.skinColor is string && d.skinColor.size() <= 16))
+        && d.isGuest is bool
+        && d.updatedAt == request.time;
+    }
+  }
+}

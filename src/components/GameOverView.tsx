@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import { PlayerStats } from '../types';
 import { sound } from '../utils/audio';
-import { getRankedLeaderboard } from '../utils/leaderboardService';
+import { getRankedLeaderboard, useLeaderboardVersion } from '../utils/leaderboardService';
 import {
   RotateCcw,
   Share2,
@@ -51,9 +51,11 @@ export const GameOverView: React.FC<GameOverViewProps> = ({
   onOpenSpin,
   onOpenHowToPlay,
 }) => {
+  const boardVersion = useLeaderboardVersion();
   const board = useMemo(
     () => getRankedLeaderboard(stats, skinColor),
-    [stats, skinColor]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [stats, skinColor, boardVersion]
   );
 
   return (

@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { PlayerStats, DailyQuest } from '../types';
 import { sound } from '../utils/audio';
-import { getRankedLeaderboard } from '../utils/leaderboardService';
+import { getRankedLeaderboard, useLeaderboardVersion } from '../utils/leaderboardService';
 import {
   Trophy,
   CheckCircle2,
@@ -34,9 +34,11 @@ export const LeaderboardModal: React.FC<LeaderboardModalProps> = ({
 }) => {
   const [tab, setTab] = useState<'ranks' | 'quests'>('ranks');
 
+  const boardVersion = useLeaderboardVersion();
   const board = useMemo(
     () => getRankedLeaderboard(stats, skinColor),
-    [stats, skinColor]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [stats, skinColor, boardVersion]
   );
 
   const displayName = stats.isGuest ? 'Misafir' : stats.playerName || 'Misafir';

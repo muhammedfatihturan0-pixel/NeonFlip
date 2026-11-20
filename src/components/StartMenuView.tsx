@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import { Skin, PlayerStats } from '../types';
 import { sound } from '../utils/audio';
-import { getRankedLeaderboard } from '../utils/leaderboardService';
+import { getRankedLeaderboard, useLeaderboardVersion } from '../utils/leaderboardService';
 import { PWAInstallButton } from './PWAInstallButton';
 import {
   Play,
@@ -49,9 +49,11 @@ export const StartMenuView: React.FC<StartMenuViewProps> = ({
   onOpenHowToPlay,
   onEditPlayerName,
 }) => {
+  const boardVersion = useLeaderboardVersion();
   const board = useMemo(
     () => getRankedLeaderboard(stats, selectedSkin.color),
-    [stats, selectedSkin.color]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [stats, selectedSkin.color, boardVersion]
   );
 
   const displayName = stats.isGuest ? 'Misafir' : stats.playerName || 'Misafir';
